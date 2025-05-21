@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S3 File Manager</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .file-name {
+            cursor: pointer;
+            color: blue;
+            text-decoration: underline;
+        }
+        .delete-btn {
+            cursor: pointer;
+            color: red;
+            margin-left: 10px;
+        }
+        .upload-form {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .bucket-selector {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .image-preview {
+            margin-top: 20px;
+            max-width: 100%;
+        }
+        img {
+            max-width: 100%;
+            max-height: 500px;
+        }
+        select {
+            padding: 8px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 8px 12px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>S3 File Manager NEW</h1>
+    
+    <div class="bucket-selector">
+        <h2>Select Bucket</h2>
+        <select id="bucketSelect">
+            <option value="">Loading buckets...</option>
+        </select>
+        <button id="changeBucketBtn">Change Bucket</button>
+        <div id="bucketStatus"></div>
+    </div>
+    
+    <div class="upload-form">
+        <h2>Upload a New File</h2>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <input type="file" id="fileInput" required>
+            <button type="submit">Upload</button>
+        </form>
+        <div id="uploadStatus"></div>
+    </div>
+    
+    <h2>Files in S3 Bucket</h2>
+    <table id="fileTable">
+        <thead>
+            <tr>
+                <th>File Name</th>
+                <th>Size (bytes)</th>
+                <th>Last Modified</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="fileList">
+            <!-- Files will be listed here -->
+        </tbody>
+    </table>
+    
+    <div id="previewContainer" class="image-preview">
+        <!-- Image preview will be shown here -->
+    </div>
+
+    <script>
+        // Load buckets when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            loadBuckets();
+            loadFileList();
+        });
+        
+        // Function to load buckets
+        function loadBuckets() {
+            fetch('/list_buckets')
+                .then(response => response.json())
+                .then(data => {
+                    const bucketSelect = document.getElementById('bucketSelect');
+                    bucketSelect.innerHTML = '';
+                    
+                    data.forEach(bucket => {
+                        const option = document.createElement('option');
+                        option.value = bucket.Name;
+                        option.textContent = bucket.Name;
+                        bucketSelect.appendChild(option);
+                    });
+                })
+                .catch(error => console.error('Error loading buckets:', error));
+        }
+        
+        // Handle bucket change
+        document.getElementById('changeBucketBtn').addEventListener('click', function() {
+            const bucketSelect = document.getElementById('bucketSelect');
+            const selectedBucket = bucketSelect.value;
+            const bucketStatus = document.getElementById('bucketStatus');
+            
+            if (!selectedBucket) {
+                bucketStatus.textContent = 'Please select a bucket';
+                return;
+            }
+            
+            bucketStatus.textContent = 'Changing bucket...';
+            
+            fetch('/set_bucket', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ bucket: selectedBucket })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    bucketStatus.textContent = data.message;
+                    loadFileList(); // Refresh the file list for the new bucket
+                } else {
+                    bucketStatus.textContent = data.error || 'Failed to change bucket';
+                }
+            })
+            .catch(error => {
+                bucketStatus.textContent = 'Error changing bucket';
+                console.error('Error:', error);
+            });
+        });
+
+        // Function to load the file list
+        function loadFileList() {
+            fetch('/list_objects')
+                .then(response => response.json())
+                .then(data => {
+                    const fileList = document.getElementById('fileList');
+                    fileList.innerHTML = '';
+                    
+                    data.forEach(file => {
+                        const row = document.createElement('tr');
+                        
+                        const nameCell = document.createElement('td');
+                        nameCell.classList.add('file-name');
+                        nameCell.textContent = file.Name;
+                        nameCell.onclick = () => showFilePreview(file.Name);
+                        
+                        const sizeCell = document.createElement('td');
+                        sizeCell.textContent = file.Size;
+                        
+                        const dateCell = document.createElement('td');
+                        const date = new Date(file.LastModified);
+                        dateCell.textContent = date.toLocaleString();
+                        
+                        const actionCell = document.createElement('td');
+                        const deleteBtn = document.createElement('span');
+                        deleteBtn.classList.add('delete-btn');
+                        deleteBtn.textContent = 'Delete';
+                        deleteBtn.onclick = () => deleteFile(file.Name);
+                        actionCell.appendChild(deleteBtn);
+                        
+                        row.appendChild(nameCell);
+                        row.appendChild(sizeCell);
+                        row.appendChild(dateCell);
+                        row.appendChild(actionCell);
+                        
+                        fileList.appendChild(row);
+                    });
+                })
+                .catch(error => console.error('Error loading file list:', error));
+        }
+        
+        // Function to delete a file
+        function deleteFile(fileName) {
+            if (!confirm(`Are you sure you want to delete ${fileName}?`)) {
+                return;
+            }
+            
+            fetch('/delete_object', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ key: fileName })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    alert(data.message);
+                    loadFileList(); // Refresh the file list
+                    document.getElementById('previewContainer').innerHTML = ''; // Clear preview if showing deleted file
+                } else {
+                    alert(data.error || 'Failed to delete file');
+                }
+            })
+            .catch(error => {
+                alert('Error deleting file');
+                console.error('Error:', error);
+            });
+        }
+        
+        // Function to show file preview
+        function showFilePreview(fileName) {
+            fetch(`/get_thumbnail?obj=${encodeURIComponent(fileName)}`)
+                .then(response => response.json())
+                .then(data => {
+                    const previewContainer = document.getElementById('previewContainer');
+                    
+                    if (data.url) {
+                        const fileExtension = fileName.split('.').pop().toLowerCase();
+                        const isImage = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(fileExtension);
+                        
+                        if (isImage) {
+                            previewContainer.innerHTML = `<h3>Preview: ${fileName}</h3><img src="${data.url}" alt="${fileName}">`;
+                        } else {
+                            previewContainer.innerHTML = `<h3>File: ${fileName}</h3><p><a href="${data.url}" target="_blank">Download or View File</a></p>`;
+                        }
+                    } else {
+                        previewContainer.innerHTML = '<p>Error loading file preview</p>';
+                    }
+                })
+                .catch(error => console.error('Error getting file URL:', error));
+        }
+        
+        // Handle file upload
+        document.getElementById('uploadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('fileInput');
+            const uploadStatus = document.getElementById('uploadStatus');
+            
+            if (fileInput.files.length === 0) {
+                uploadStatus.textContent = 'Please select a file to upload';
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            uploadStatus.textContent = 'Uploading...';
+            
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    uploadStatus.textContent = data.message;
+                    fileInput.value = '';
+                    loadFileList(); // Refresh the file list
+                } else {
+                    uploadStatus.textContent = data.error || 'Upload failed';
+                }
+            })
+            .catch(error => {
+                uploadStatus.textContent = 'Error uploading file';
+                console.error('Error:', error);
+            });
+        });
+    </script>
+</body>
+</html>

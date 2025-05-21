@@ -1,0 +1,154 @@
+name: Deploy HW05 Lambda Functions
+on:
+ push:
+   branches:
+     - main
+   paths:
+     - 'hw05/**'
+jobs:
+ deploy:
+   runs-on: self-hosted
+   steps:
+     - uses: actions/checkout@v3
+     
+     - name: Set up Python
+       uses: actions/setup-python@v4
+       with:
+         python-version: '3.9'
+         
+     - name: Install dependencies
+       run: |
+         python -m pip install --upgrade pip
+         pip install pytest boto3
+         if [ -f hw05/requirements.txt ]; then pip install -r hw05/requirements.txt; fi
+     
+     - name: Zip Lambda functions
+       run: |
+         cd hw05
+         zip -j hw05-listBuckets.zip hw05-listBuckets.py
+         zip -j hw05-listObjects.zip hw05-listObjects.py
+         zip -j hw05-addObject.zip hw05-addObject.py
+         zip -j hw05-deleteObject.zip hw05-deleteObject.py
+         
+         # REST API Lambdas
+         zip -j hw05-rest-listBuckets.zip hw05-rest-listBuckets.py
+         zip -j hw05-rest-listObjects.zip hw05-rest-listObjects.py
+         zip -j hw05-rest-addObject.zip hw05-rest-addObject.py
+         zip -j hw05-rest-deleteObject.zip hw05-rest-deleteObject.py
+     
+     - name: Configure AWS credentials
+       env:
+         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+         AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+       run: |
+         aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+         aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+         aws configure set aws_session_token $AWS_SESSION_TOKEN
+         aws configure set region us-east-1
+         aws configure set output json
+     
+     - name: Deploy HTTP API Lambda functions
+       run: |
+         # Deploy list_buckets Lambda
+         aws lambda update-function-code \
+           --function-name hw05-listBuckets \
+           --region us-east-1 \
+           --zip-file fileb://hw05/hw05-listBuckets.zip
+         
+         # Set reserved concurrency to 1
+         aws lambda put-function-concurrency \
+           --function-name hw05-listBuckets \
+           --region us-east-1 \
+           --reserved-concurrent-executions 1
+         
+         # Deploy list_objects Lambda
+         aws lambda update-function-code \
+           --function-name hw05-listObjects \
+           --region us-east-1 \
+           --zip-file fileb://hw05/hw05-listObjects.zip
+         
+         # Set reserved concurrency to 1
+         aws lambda put-function-concurrency \
+           --function-name hw05-listObjects \
+           --region us-east-1 \
+           --reserved-concurrent-executions 1
+         
+         # Deploy add_object Lambda
+         aws lambda update-function-code \
+           --function-name hw05-addObject \
+           --region us-east-1 \
+           --zip-file fileb://hw05/hw05-addObject.zip
+         
+         # Set reserved concurrency to 1
+         aws lambda put-function-concurrency \
+           --function-name hw05-addObject \
+           --region us-east-1 \
+           --reserved-concurrent-executions 1
+         
+         # Deploy delete_object Lambda
+         aws lambda update-function-code \
+           --function-name hw05-deleteObject \
+           --region us-east-1 \
+           --zip-file fileb://hw05/hw05-deleteObject.zip
+         
+         # Set reserved concurrency to 1
+         aws lambda put-function-concurrency \
+           --function-name hw05-deleteObject \
+           --region us-east-1 \
+           --reserved-concurrent-executions 1
+     
+     - name: Deploy REST API Lambda functions
+       run: |
+         # Deploy list_buckets Lambda
+         aws lambda update-function-code \
+           --function-name hw05-rest-listBuckets \
+           --region us-east-1 \
+           --zip-file fileb://hw05/hw05-rest-listBuckets.zip
+         
+         # Set reserved concurrency to 1
+         aws lambda put-function-concurrency \
+           --function-name hw05-rest-listBuckets \
+           --region us-east-1 \
+           --reserved-concurrent-executions 1
+         
+         # Deploy list_objects Lambda
+         aws lambda update-function-code \
+           --function-name hw05-rest-listObjects \
+           --region us-east-1 \
+           --zip-file fileb://hw05/hw05-rest-listObjects.zip
+         
+         # Set reserved concurrency to 1
+         aws lambda put-function-concurrency \
+           --function-name hw05-rest-listObjects \
+           --region us-east-1 \
+           --reserved-concurrent-executions 1
+         
+         # Deploy add_object Lambda
+         aws lambda update-function-code \
+           --function-name hw05-rest-addObject \
+           --region us-east-1 \
+           --zip-file fileb://hw05/hw05-rest-addObject.zip
+         
+         # Set reserved concurrency to 1
+         aws lambda put-function-concurrency \
+           --function-name hw05-rest-addObject \
+           --region us-east-1 \
+           --reserved-concurrent-executions 1
+         
+         # Deploy delete_object Lambda
+         aws lambda update-function-code \
+           --function-name hw05-rest-deleteObject \
+           --region us-east-1 \
+           --zip-file fileb://hw05/hw05-rest-deleteObject.zip
+         
+         # Set reserved concurrency to 1
+         aws lambda put-function-concurrency \
+           --function-name hw05-rest-deleteObject \
+           --region us-east-1 \
+           --reserved-concurrent-executions 1
+     
+     - name: Run tests
+       run: |
+         cd hw05
+         pytest -v test_api.py

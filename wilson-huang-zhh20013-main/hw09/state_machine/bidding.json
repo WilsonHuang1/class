@@ -1,0 +1,241 @@
+{
+  "Comment": "State machine for validating and placing bids",
+  "StartAt": "ValidateAuctionExists",
+  "States": {
+    "ValidateAuctionExists": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:getItem",
+      "Parameters": {
+        "TableName": "hw09-auctions",
+        "Key": {
+          "auctionId": {
+            "S.$": "$.auctionId"
+          }
+        }
+      },
+      "ResultPath": "$.auctionResult",
+      "Next": "CheckAuctionExists"
+    },
+    "CheckAuctionExists": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.auctionResult.Item",
+          "IsPresent": true,
+          "Next": "CheckAuctionStatus"
+        }
+      ],
+      "Default": "AuctionNotFoundError"
+    },
+    "CheckAuctionStatus": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.auctionResult.Item.status.S",
+          "StringEquals": "open",
+          "Next": "ValidateUserExists"
+        }
+      ],
+      "Default": "AuctionClosedError"
+    },
+    "ValidateUserExists": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:getItem",
+      "Parameters": {
+        "TableName": "hw09-user",
+        "Key": {
+          "userId": {
+            "S.$": "$.userId"
+          }
+        }
+      },
+      "ResultPath": "$.userResult",
+      "Next": "CheckUserExists"
+    },
+    "CheckUserExists": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.userResult.Item",
+          "IsPresent": true,
+          "Next": "ExtractBalanceValues"
+        }
+      ],
+      "Default": "UserNotFoundError"
+    },
+    "ExtractBalanceValues": {
+      "Type": "Pass",
+      "Parameters": {
+        "userBalance.$": "$.userResult.Item.acctBalance.N",
+        "bidAmount.$": "$.bidAmt"
+      },
+      "ResultPath": "$.balanceValues",
+      "Next": "CompareBalances"
+    },
+    "CompareBalances": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:874791280807:function:compareValues",
+        "Payload": {
+          "value1.$": "$.balanceValues.userBalance",
+          "value2.$": "$.balanceValues.bidAmount",
+          "operation": "greaterThanOrEqual"
+        }
+      },
+      "ResultPath": "$.balanceComparison",
+      "Next": "CheckBalanceComparisonResult"
+    },
+    "CheckBalanceComparisonResult": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.balanceComparison.Payload.result",
+          "BooleanEquals": true,
+          "Next": "GetHighestBid"
+        }
+      ],
+      "Default": "InsufficientBalanceError"
+    },
+    "GetHighestBid": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:query",
+      "Parameters": {
+        "TableName": "hw09-bids",
+        "KeyConditionExpression": "auctionId = :auctionId",
+        "ExpressionAttributeValues": {
+          ":auctionId": {
+            "S.$": "$.auctionId"
+          }
+        },
+        "Limit": 1,
+        "ScanIndexForward": false
+      },
+      "ResultPath": "$.highestBidResult",
+      "Next": "CheckHighestBidExists"
+    },
+    "CheckHighestBidExists": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.highestBidResult.Items[0]",
+          "IsPresent": true,
+          "Next": "ExtractBidValues"
+        }
+      ],
+      "Default": "PlaceBid"
+    },
+    "ExtractBidValues": {
+      "Type": "Pass",
+      "Parameters": {
+        "highestBid.$": "$.highestBidResult.Items[0].bidAmt.N",
+        "currentBid.$": "$.bidAmt"
+      },
+      "ResultPath": "$.bidValues",
+      "Next": "CompareBids"
+    },
+    "CompareBids": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:874791280807:function:compareValues",
+        "Payload": {
+          "value1.$": "$.bidValues.currentBid",
+          "value2.$": "$.bidValues.highestBid",
+          "operation": "greaterThan"
+        }
+      },
+      "ResultPath": "$.bidComparison",
+      "Next": "CheckBidComparisonResult"
+    },
+    "CheckBidComparisonResult": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.bidComparison.Payload.result",
+          "BooleanEquals": true,
+          "Next": "PlaceBid"
+        }
+      ],
+      "Default": "BidTooLowError"
+    },
+    "PlaceBid": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
+      "Parameters": {
+        "TableName": "hw09-bids",
+        "Item": {
+          "auctionId": {
+            "S.$": "$.auctionId"
+          },
+          "bidAmt": {
+            "N.$": "States.StringToJson(States.JsonToString($.bidAmt))"
+          },
+          "userId": {
+            "S.$": "$.userId"
+          },
+          "date": {
+            "S.$": "$$.State.EnteredTime"
+          }
+        }
+      },
+      "ResultPath": "$.bidResult",
+      "Next": "PublishToSNS"
+    },
+    "PublishToSNS": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:874791280807:hw09-bid-notification-topic",
+        "Message": {
+          "default.$": "States.Format('New bid of {} placed on auction {} by user {}', $.bidAmt, $.auctionId, $.userId)"
+        },
+        "MessageAttributes": {
+          "auctionId": {
+            "DataType": "String",
+            "StringValue.$": "$.auctionId"
+          },
+          "userId": {
+            "DataType": "String",
+            "StringValue.$": "$.userId"
+          },
+          "bidAmt": {
+            "DataType": "String",
+            "StringValue.$": "$.bidAmt"
+          },
+          "eventType": {
+            "DataType": "String",
+            "StringValue": "NEW_HIGH_BID"
+          }
+        }
+      },
+      "ResultPath": "$.snsResult",
+      "End": true
+    },
+    "AuctionNotFoundError": {
+      "Type": "Fail",
+      "Error": "AuctionNotFound",
+      "Cause": "The specified auction does not exist."
+    },
+    "AuctionClosedError": {
+      "Type": "Fail",
+      "Error": "AuctionClosed",
+      "Cause": "The auction is not open for bidding."
+    },
+    "UserNotFoundError": {
+      "Type": "Fail",
+      "Error": "UserNotFound",
+      "Cause": "The specified user does not exist."
+    },
+    "InsufficientBalanceError": {
+      "Type": "Fail",
+      "Error": "InsufficientBalance",
+      "Cause": "The user does not have sufficient balance to place this bid."
+    },
+    "BidTooLowError": {
+      "Type": "Fail",
+      "Error": "BidTooLow",
+      "Cause": "The bid amount is not higher than the current highest bid."
+    }
+  }
+}

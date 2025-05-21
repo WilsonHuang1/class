@@ -1,0 +1,51 @@
+[
+    // listBucket
+    {
+        "method": "GET",
+        "resourcePath": "/list",
+        "requestContext": {
+            "requestTime": "$context.requestTime",
+            "requestId": "$context.requestId"
+        }
+    },
+    // listObject
+    {
+        "method": "GET",
+        "resourcePath": "/{bucket-name}",
+        "pathParameters": {
+            "bucket-name": "$method.request.path.bucket-name"
+        },
+        "requestContext": {
+            "requestTime": "$context.requestTime",
+            "requestId": "$context.requestId"
+        }
+    },
+    // addObject
+    {
+        "method": "POST",
+        "resourcePath": "/{bucket-name}",
+        "pathParameters": {
+          "bucket-name": "$method.request.path.bucket-name"
+        },
+        "body-json": $input.json('$'),
+        "body": "$util.escapeJavaScript($input.json('$'))",
+        "requestContext": {
+          "requestTime": "$context.requestTime",
+          "requestId": "$context.requestId"
+        }
+    },
+    // deleteObject
+    {
+        "method": "DELETE",
+        "resourcePath": "/{bucket-name}/{object-name}",
+        "pathParameters": {
+          "bucket-name": "$method.request.path.bucket-name",
+          "object-name": "$method.request.path.object-name"
+        },
+        "requestContext": {
+          "requestTime": "$context.requestTime",
+          "requestId": "$context.requestId"
+        }
+      }
+]
+

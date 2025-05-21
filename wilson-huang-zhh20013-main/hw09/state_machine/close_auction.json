@@ -1,0 +1,221 @@
+{
+  "Comment": "State machine for closing auctions",
+  "StartAt": "ValidateAuctionExists",
+  "States": {
+    "ValidateAuctionExists": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:getItem",
+      "Parameters": {
+        "TableName": "hw09-auctions",
+        "Key": {
+          "auctionId": {
+            "S.$": "$.auctionId"
+          }
+        }
+      },
+      "ResultPath": "$.auctionResult",
+      "Next": "CheckAuctionExists"
+    },
+    "CheckAuctionExists": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.auctionResult.Item",
+          "IsPresent": true,
+          "Next": "CheckAuctionStatus"
+        }
+      ],
+      "Default": "AuctionNotFoundError"
+    },
+    "CheckAuctionStatus": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.auctionResult.Item.status.S",
+          "StringEquals": "closed",
+          "Next": "AuctionAlreadyClosedError"
+        }
+      ],
+      "Default": "GetHighestBid"
+    },
+    "GetHighestBid": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:query",
+      "Parameters": {
+        "TableName": "hw09-bids",
+        "KeyConditionExpression": "auctionId = :auctionId",
+        "ExpressionAttributeValues": {
+          ":auctionId": {
+            "S.$": "$.auctionId"
+          }
+        },
+        "Limit": 1,
+        "ScanIndexForward": false
+      },
+      "ResultPath": "$.highestBidResult",
+      "Next": "CheckHighestBidExists"
+    },
+    "CheckHighestBidExists": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.highestBidResult.Items[0]",
+          "IsPresent": true,
+          "Next": "ValidateWinnerExists"
+        }
+      ],
+      "Default": "CloseAuctionWithNoWinner"
+    },
+    "ValidateWinnerExists": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:getItem",
+      "Parameters": {
+        "TableName": "hw09-user",
+        "Key": {
+          "userId": {
+            "S.$": "$.highestBidResult.Items[0].userId.S"
+          }
+        }
+      },
+      "ResultPath": "$.winnerResult",
+      "Next": "CheckWinnerExists"
+    },
+    "CheckWinnerExists": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.winnerResult.Item",
+          "IsPresent": true,
+          "Next": "ExtractBalanceValues"
+        }
+      ],
+      "Default": "WinnerNotFoundError"
+    },
+    "ExtractBalanceValues": {
+      "Type": "Pass",
+      "Parameters": {
+        "userBalance.$": "$.winnerResult.Item.acctBalance.N",
+        "bidAmount.$": "$.highestBidResult.Items[0].bidAmt.N"
+      },
+      "ResultPath": "$.balanceValues",
+      "Next": "CompareBalances"
+    },
+    "CompareBalances": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:874791280807:function:compareValues",
+        "Payload": {
+          "value1.$": "$.balanceValues.userBalance",
+          "value2.$": "$.balanceValues.bidAmount",
+          "operation": "greaterThanOrEqual"
+        }
+      },
+      "ResultPath": "$.balanceComparison",
+      "Next": "CheckBalanceComparisonResult"
+    },
+    "CheckBalanceComparisonResult": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.balanceComparison.Payload.result",
+          "BooleanEquals": true,
+          "Next": "CloseAuctionWithWinner"
+        }
+      ],
+      "Default": "InsufficientBalanceError"
+    },
+    "CloseAuctionWithWinner": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "hw09-auctions",
+        "Key": {
+          "auctionId": {
+            "S.$": "$.auctionId"
+          }
+        },
+        "UpdateExpression": "SET #status = :status, winningUserId = :winningUserId",
+        "ExpressionAttributeNames": {
+          "#status": "status"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S": "closed"
+          },
+          ":winningUserId": {
+            "S.$": "$.highestBidResult.Items[0].userId.S"
+          }
+        },
+        "ReturnValues": "UPDATED_NEW"
+      },
+      "ResultPath": "$.updateAuctionResult",
+      "Next": "DeductWinnerBalance"
+    },
+    "DeductWinnerBalance": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "hw09-user",
+        "Key": {
+          "userId": {
+            "S.$": "$.highestBidResult.Items[0].userId.S"
+          }
+        },
+        "UpdateExpression": "SET acctBalance = acctBalance - :bidAmt",
+        "ExpressionAttributeValues": {
+          ":bidAmt": {
+            "N.$": "$.highestBidResult.Items[0].bidAmt.N"
+          }
+        },
+        "ReturnValues": "UPDATED_NEW"
+      },
+      "ResultPath": "$.updateUserResult",
+      "End": true
+    },
+    "CloseAuctionWithNoWinner": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "hw09-auctions",
+        "Key": {
+          "auctionId": {
+            "S.$": "$.auctionId"
+          }
+        },
+        "UpdateExpression": "SET #status = :status",
+        "ExpressionAttributeNames": {
+          "#status": "status"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S": "closed"
+          }
+        },
+        "ReturnValues": "UPDATED_NEW"
+      },
+      "ResultPath": "$.updateAuctionResult",
+      "End": true
+    },
+    "AuctionNotFoundError": {
+      "Type": "Fail",
+      "Error": "AuctionNotFound",
+      "Cause": "The specified auction does not exist."
+    },
+    "AuctionAlreadyClosedError": {
+      "Type": "Fail",
+      "Error": "AuctionAlreadyClosed",
+      "Cause": "The auction is already closed."
+    },
+    "WinnerNotFoundError": {
+      "Type": "Fail",
+      "Error": "WinnerNotFound",
+      "Cause": "The winning user does not exist."
+    },
+    "InsufficientBalanceError": {
+      "Type": "Fail",
+      "Error": "InsufficientBalance",
+      "Cause": "The winning user does not have sufficient balance to cover the bid."
+    }
+  }
+}

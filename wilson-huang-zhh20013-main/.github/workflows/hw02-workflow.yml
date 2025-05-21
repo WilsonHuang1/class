@@ -1,0 +1,37 @@
+# Trigger deployment only on push to main branch
+on:
+  push:
+    branches:
+      # Set this to "main" or "master" or whatever your main branch is called
+      - main
+    paths:
+      - hw02/**
+
+jobs:
+  deploy:
+    name: Deploy to EC2 on master branch push
+    # Your repo MUST be in a UConn GitHub Organization that has been configured with RH Runners. 
+    # This is a manual task that needs to be completed by the UConn School of Business IT staff.
+    # The runs-on value must be "self-hosted" to leverage the runner.
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout the files
+        uses: actions/checkout@v2
+
+      - name: Deploy to Server 1
+        # UConn does not support node20, so we cannot used the latest version of easingthemes/ssh-deploy
+        # Instead, we explicitly use v4.1.10
+        uses: easingthemes/ssh-deploy@v4.1.10
+        env:
+          # You must create GitHub secrets for each of these env variables
+          # SSH_PRIVATE_KEY is literally the RSA private key value. "Show key" in the "AWS Details" tab of the LL launch screen
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+          # The public dns of your EC2 instance. You must update this value every LL session! (Yes, this is annoying.)
+          REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
+          # Usually set to "ec2-user"
+          REMOTE_USER: "ec2-user"
+          # Limit the deploy to ONLY these files
+          SOURCE: "hw02/*" 
+          # Local EC2 path to deploy the code. e.g. "~/server"
+          TARGET: "~/hw02"

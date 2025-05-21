@@ -1,0 +1,40 @@
+name: Python package
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - hw01/**
+      
+jobs:
+  build:
+
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        #python-version: ["3.7", "3.8", "3.9", "3.10", "3.11"]
+        python-version: ["3.8"]
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install pylint dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pylint
+      - name: Analysing the code with pylint
+        run: |
+          pylint $(git ls-files 'hw01/*.py')
+
+      - name: Install pytest dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Run all your pytest tests in your code
+        run: |
+          pytest

@@ -1,0 +1,73 @@
+name: Deploy to Amazon ECS
+
+on:
+  push:
+    branches: [ feature-hw06 ]
+    paths:
+      - 'hw06/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'hw06/**'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: hw06-python-flask-zhisong-huang-zhh20013
+  ECS_CLUSTER: hw06-cluster
+  ECS_SERVICE: hw06-service
+  ECS_TASK_DEFINITION: hw06/task-definition.json
+  CONTAINER_NAME: hw06-container
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: self-hosted
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v3
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+        aws-region: us-east-1
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      run: |
+        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com
+        echo "registry=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com" >> $GITHUB_OUTPUT
+
+    - name: Build, tag, and push image to Amazon ECR
+      id: build-image
+      working-directory: ./hw06
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build --platform linux/amd64 -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+    - name: Download current task definition
+      run: |
+        aws ecs describe-task-definition --task-definition hw06-task --query taskDefinition > hw06/task-definition.json
+
+    - name: Update the ECS task definition with new image
+      id: task-def
+      env:
+        ECS_TASK_DEFINITION_FILE: ${{ env.ECS_TASK_DEFINITION }}
+        CONTAINER_NAME: ${{ env.CONTAINER_NAME }}
+        IMAGE: ${{ steps.build-image.outputs.image }}
+      run: |
+        # Replace the image in the task definition
+        sed -i "s|\"image\": \".*\"|\"image\": \"$IMAGE\"|g" $ECS_TASK_DEFINITION_FILE
+        echo "task-definition=$ECS_TASK_DEFINITION_FILE" >> $GITHUB_OUTPUT
+
+    - name: Deploy Amazon ECS task definition
+      run: |
+        aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition hw06-task --force-new-deployment
+        echo "Deployment initiated"

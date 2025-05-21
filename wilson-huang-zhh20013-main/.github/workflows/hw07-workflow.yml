@@ -1,0 +1,151 @@
+name: Deploy HW07 Lambda Functions
+
+on:
+  push:
+    branches: [ feature-hw07 ]
+    paths:
+      - 'hw07/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'hw07/**'
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      
+      - name: Create deployment packages
+        run: |
+          cd hw07
+          # For thumbnail lambda
+          mkdir -p package_thumbnail
+          cp thumbnail_lambda.py package_thumbnail/
+          cd package_thumbnail
+          zip -r ../thumbnail_lambda.zip .
+          cd ..
+          
+          # For metadata lambda  
+          mkdir -p package_metadata
+          cp metadata_lambda.py package_metadata/
+          cd package_metadata
+          zip -r ../metadata_lambda.zip .
+      
+      - name: Deploy Lambda functions
+        run: |
+          # Update the thumbnail function
+          aws lambda update-function-code \
+            --function-name hw07-thumbnail-generator \
+            --zip-file fileb://hw07/thumbnail_lambda.zip || \
+          aws lambda create-function \
+            --function-name hw07-thumbnail-generator \
+            --runtime python3.9 \
+            --role arn:aws:iam::874791280807:role/LabRole \
+            --handler thumbnail_lambda.lambda_handler \
+            --timeout 30 \
+            --memory-size 256 \
+            --zip-file fileb://hw07/thumbnail_lambda.zip \
+            --environment "Variables={THUMBNAIL_BUCKET=hw07-thumbnail-1}"
+          
+          # Update the metadata function
+          aws lambda update-function-code \
+            --function-name hw07-metadata-processor \
+            --zip-file fileb://hw07/metadata_lambda.zip || \
+          aws lambda create-function \
+            --function-name hw07-metadata-processor \
+            --runtime python3.9 \
+            --role arn:aws:iam::874791280807:role/LabRole \
+            --handler metadata_lambda.lambda_handler \
+            --timeout 30 \
+            --memory-size 256 \
+            --zip-file fileb://hw07/metadata_lambda.zip \
+            --environment "Variables={METADATA_TABLE=hw07-image-metadata}"
+      
+      - name: Configure Event Source Mappings
+        run: |
+          # Check if thumbnail trigger exists
+          THUMBNAIL_MAPPINGS=$(aws lambda list-event-source-mappings --function-name hw07-thumbnail-generator --query "EventSourceMappings[?EventSourceArn=='arn:aws:sqs:us-east-1:874791280807:hw07-thumbnail-queue'].EventSourceArn" --output text)
+          
+          if [ -z "$THUMBNAIL_MAPPINGS" ]; then
+            echo "Creating thumbnail event source mapping..."
+            aws lambda create-event-source-mapping \
+              --function-name hw07-thumbnail-generator \
+              --event-source-arn arn:aws:sqs:us-east-1:874791280807:hw07-thumbnail-queue \
+              --batch-size 10
+          else
+            echo "Thumbnail event source mapping already exists"
+          fi
+          
+          # Check if metadata trigger exists
+          METADATA_MAPPINGS=$(aws lambda list-event-source-mappings --function-name hw07-metadata-processor --query "EventSourceMappings[?EventSourceArn=='arn:aws:sqs:us-east-1:874791280807:hw07-metadata-queue'].EventSourceArn" --output text)
+          
+          if [ -z "$METADATA_MAPPINGS" ]; then
+            echo "Creating metadata event source mapping..."
+            aws lambda create-event-source-mapping \
+              --function-name hw07-metadata-processor \
+              --event-source-arn arn:aws:sqs:us-east-1:874791280807:hw07-metadata-queue \
+              --batch-size 10
+          else
+            echo "Metadata event source mapping already exists"
+          fi
+      
+      - name: Setup Extra Credit - SNS Filter Policy & DLQ
+        run: |
+          # Create DLQ if it doesn't exist
+          aws sqs create-queue --queue-name hw07-dlq --tags Key=hw,Value=07 || true
+          
+          # Get DLQ URL and ARN
+          DLQ_URL=$(aws sqs get-queue-url --queue-name hw07-dlq --query 'QueueUrl' --output text)
+          DLQ_ARN=$(aws sqs get-queue-attributes --queue-url $DLQ_URL --attribute-names QueueArn --query 'Attributes.QueueArn' --output text)
+          echo "DLQ ARN: $DLQ_ARN"
+          
+          # Configure Thumbnail Queue to use DLQ with max receives of 3
+          THUMB_QUEUE_URL=$(aws sqs get-queue-url --queue-name hw07-thumbnail-queue --query 'QueueUrl' --output text)
+          aws sqs set-queue-attributes \
+            --queue-url $THUMB_QUEUE_URL \
+            --attributes "{\"RedrivePolicy\": \"{\\\"deadLetterTargetArn\\\":\\\"$DLQ_ARN\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\"}"
+          
+          # Get SNS topic ARN
+          SNS_TOPIC_ARN=$(aws sns list-topics --query "Topics[?contains(TopicArn, 'hw07-upload-notification-topic')].TopicArn" --output text)
+          echo "SNS Topic ARN: $SNS_TOPIC_ARN"
+          
+          # Get subscription ARNs for both queues
+          THUMBNAIL_SUB_ARN=$(aws sns list-subscriptions-by-topic --topic-arn "$SNS_TOPIC_ARN" --query "Subscriptions[?Endpoint.contains(@, 'hw07-thumbnail-queue')].SubscriptionArn" --output text)
+          echo "Thumbnail subscription ARN: $THUMBNAIL_SUB_ARN"
+          
+          # Create SNS filter policy for thumbnail subscription - only accept image files
+          if [ ! -z "$THUMBNAIL_SUB_ARN" ]; then
+            # Set filter policy to only process images
+            aws sns set-subscription-attributes \
+              --subscription-arn "$THUMBNAIL_SUB_ARN" \
+              --attribute-name FilterPolicy \
+              --attribute-value '{"s3:ObjectKey": [{"suffix": ".jpg"}, {"suffix": ".jpeg"}, {"suffix": ".png"}]}'
+            echo "Set filter policy on thumbnail subscription"
+          else
+            echo "Thumbnail subscription not found!"
+          fi
+      
+      - name: Add Tags to Resources
+        run: |
+          # Tag Lambda functions
+          aws lambda tag-resource \
+            --resource arn:aws:lambda:us-east-1:874791280807:function:hw07-thumbnail-generator \
+            --tags hw=07
+            
+          aws lambda tag-resource \
+            --resource arn:aws:lambda:us-east-1:874791280807:function:hw07-metadata-processor \
+            --tags hw=07

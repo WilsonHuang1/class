@@ -1,0 +1,1 @@
+run the code with (python3 app.py) once you are in the hw02 folder

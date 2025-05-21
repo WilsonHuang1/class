@@ -1,0 +1,13 @@
+{
+    "s3:ObjectKey": [
+      {
+        "suffix": ".jpg"
+      },
+      {
+        "suffix": ".jpeg"
+      },
+      {
+        "suffix": ".png"
+      }
+    ]
+  }

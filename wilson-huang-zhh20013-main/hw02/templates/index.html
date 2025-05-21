@@ -1,0 +1,46 @@
+<html>   
+<head>   
+    <title>upload the file : GFG</title>   
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 8px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        a {
+            color: blue;
+            text-decoration: underline;
+        }
+    </style>
+</head>   
+<body>   
+    <form action="/success" method="post" enctype="multipart/form-data">   
+        <input type="file" name="file" />   
+        <input type="submit" value="Upload">   
+    </form>   
+
+    <h2>Uploaded Files</h2>
+    <table>
+        <tr>
+            <th>File Name</th>
+            <th>Size</th>
+            <th>Modified Date</th>
+        </tr>
+        {% for file in files %}
+        <tr>
+            <td><a href="{{ url_for('uploaded_file', filename=file.name) }}" target="_blank">{{ file.name }}</a></td>
+            <td>{{ file.size }}</td>
+            <td>{{ file.modified }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>   
+</html>
